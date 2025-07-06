@@ -97,7 +97,8 @@ function saveAll() {
   })
   .catch(err => {
     console.error("Kon geen data ophalen van Google Sheet:", err);
-    renderAll(); // fallback op localStorage als ophalen mislukt
+    renderAll();
+  }); // fallback op localStorage als ophalen mislukt
   });
 }
 
