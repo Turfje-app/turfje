@@ -1,0 +1,194 @@
+<!DOCTYPE html>
+<html lang="nl">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Turfje</title>
+  <style>
+    body {
+      font-family: sans-serif;
+      padding: 1rem;
+      max-width: 600px;
+      margin: auto;
+    }
+    input, button, select {
+      margin: 0.2rem 0;
+      padding: 0.4rem;
+      width: 100%;
+    }
+    .section {
+      margin-bottom: 2rem;
+    }
+    .grid {
+      display: grid;
+      grid-template-columns: 1fr auto;
+      gap: 0.5rem;
+      align-items: center;
+    }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+    }
+    th, td {
+      border: 1px solid #ccc;
+      padding: 0.3rem;
+      text-align: center;
+    }
+  </style>
+</head>
+<body>
+  <h1>Turfje</h1>
+
+  <div class="section">
+    <h2>Groepsleden</h2>
+    <input id="newName" placeholder="Naam toevoegen">
+    <button onclick="addMember()">Toevoegen</button>
+    <ul id="memberList"></ul>
+  </div>
+
+  <div class="section">
+    <h2>Drankjes</h2>
+    <input id="drinkName" placeholder="Naam drankje">
+    <input id="drinkValue" type="number" step="0.1" placeholder="Muntwaarde">
+    <button onclick="addDrink()">Drankje toevoegen</button>
+    <ul id="drinkList"></ul>
+  </div>
+
+  <div class="section">
+    <h2>Rondje turven</h2>
+    <label>Wie haalt het?</label>
+    <select id="whoPays"></select>
+    <div id="roundInputs"></div>
+    <button onclick="turfRound()">Turf dit rondje</button>
+  </div>
+
+  <div class="section">
+    <h2>Balans</h2>
+    <table>
+      <thead>
+        <tr><th>Naam</th><th>Voor anderen</th><th>Ontvangen</th><th>Saldo</th></tr>
+      </thead>
+      <tbody id="balanceTable"></tbody>
+    </table>
+  </div>
+
+<script>
+const SCRIPT_URL = "https://script.google.com/macros/s/AKfycbyOre8eNvRofGtlBmdNClT1VMoOsiYGVtsffsC9XLddrOZQaIUqPMqum_EgsOvfxo4Q/exec";
+
+let members = JSON.parse(localStorage.getItem('members') || JSON.stringify(["Alice", "Bob", "Charlie"]));
+let drinks = JSON.parse(localStorage.getItem('drinks') || JSON.stringify([
+  { name: "Bier", value: 1 },
+  { name: "Fris", value: 1 },
+  { name: "Speciaal bier", value: 1.5 },
+  { name: "Wijn", value: 1.5 }
+]));
+let transactions = JSON.parse(localStorage.getItem('transactions') || '[]');
+
+function saveAll() {
+  localStorage.setItem('members', JSON.stringify(members));
+  localStorage.setItem('drinks', JSON.stringify(drinks));
+  localStorage.setItem('transactions', JSON.stringify(transactions));
+  fetch(SCRIPT_URL)
+  .then(res => res.json())
+  .then(data => {
+    members = data.leden;
+    drinks = data.drankjes;
+    saveAll();
+  })
+  .catch(err => {
+    console.error("Kon geen data ophalen van Google Sheet:", err);
+    renderAll(); // fallback op localStorage als ophalen mislukt
+  });
+}
+
+function addMember() {
+  const name = document.getElementById('newName').value.trim();
+  if (name && !members.includes(name)) {
+    members.push(name);
+    document.getElementById('newName').value = '';
+    saveAll();
+  }
+}
+
+function addDrink() {
+  const name = document.getElementById('drinkName').value.trim();
+  const value = parseFloat(document.getElementById('drinkValue').value);
+  if (name && value > 0) {
+    drinks.push({ name, value });
+    document.getElementById('drinkName').value = '';
+    document.getElementById('drinkValue').value = '';
+    saveAll();
+  }
+}
+
+function turfRound() {
+  const who = document.getElementById('whoPays').value;
+  const selectors = document.querySelectorAll('.drinkSelect');
+  selectors.forEach(select => {
+    const recipient = select.dataset.name;
+    const drinkName = select.value;
+    const drink = drinks.find(d => d.name === drinkName);
+    if (drink) {
+      const checkbox = document.querySelector(`.drinkCheckbox[data-name='${recipient}']`);
+      if (checkbox && checkbox.checked) {
+        const transaction = { from: who, to: recipient, value: drink.value, drink: drink.name };
+        transactions.push(transaction);
+        // verstuur naar Google Sheet
+        fetch(SCRIPT_URL, {
+          method: 'POST',
+          body: JSON.stringify({
+            van: who,
+            voor: recipient,
+            drankje: drink.name,
+            waarde: drink.value
+          }),
+          headers: {
+            'Content-Type': 'application/json'
+          }
+        });
+      }
+    }
+  });
+  saveAll();
+}
+
+function renderAll() {
+  const memberList = document.getElementById('memberList');
+  memberList.innerHTML = members.map(name => `<li>${name}</li>`).join('');
+
+  const drinkList = document.getElementById('drinkList');
+  drinkList.innerHTML = drinks.map(d => `<li>${d.name} (${d.value})</li>`).join('');
+
+  const whoSelect = document.getElementById('whoPays');
+  whoSelect.innerHTML = members.map(m => `<option value="${m}">${m}</option>`).join('');
+
+  const roundInputs = document.getElementById('roundInputs');
+  roundInputs.innerHTML = members.map(name => {
+    const drinkOptions = drinks.map(d => `<option value="${d.name}">${d.name} (${d.value})</option>`).join('');
+    return `
+      <div class="grid">
+        <label><input type="checkbox" class="drinkCheckbox" data-name="${name}"> ${name}</label>
+        <select class="drinkSelect" data-name="${name}">${drinkOptions}</select>
+      </div>`;
+  }).join('');
+
+  const balanceMap = {};
+  members.forEach(name => balanceMap[name] = { plus: 0, minus: 0 });
+  transactions.forEach(t => {
+    if (t.from !== t.to) {
+      balanceMap[t.from].plus += t.value;
+      balanceMap[t.to].minus += t.value;
+    }
+  });
+  const table = document.getElementById('balanceTable');
+  table.innerHTML = members.map(name => {
+    const b = balanceMap[name];
+    const saldo = (b.plus - b.minus).toFixed(1);
+    return `<tr><td>${name}</td><td>${b.plus.toFixed(1)}</td><td>${b.minus.toFixed(1)}</td><td>${saldo}</td></tr>`;
+  }).join('');
+}
+
+renderAll();
+</script>
+</body>
+</html>
